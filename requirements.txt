@@ -1,6 +1,6 @@
 praw
 requests
-psycopg2
+psycopg2-binary
 configparser
 numpy
 pillow
