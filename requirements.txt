@@ -1,0 +1,8 @@
+praw
+requests
+psycopg2
+configparser
+numpy
+pillow
+imgurpython
+scikit-image
