@@ -1,11 +1,11 @@
-from funcs import *
+from repy.funcs import *
 
 if __name__ == "__main__":
     conf = get_ini('info.ini')
     r, sr = reddit_session(conf)
     for sumi in sr.stream.submissions():
         print(sumi.id)
-    """
+"""
     imgur = imgur_session(conf)
     create_image_path()
     for sumi in sr.stream.submissions(pause_after=-1):
