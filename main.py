@@ -3,8 +3,8 @@ from funcs import *
 if __name__ == "__main__":
     conf = get_ini('info.ini')
     r, sr = reddit_session(conf)
-    sm = r.submission(id='a9x8j8')
-    get_attributes(sm)
+    for sumi in sr.stream.submissions():
+        print(sumi.id)
     """
     imgur = imgur_session(conf)
     create_image_path()
