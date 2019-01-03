@@ -1,4 +1,4 @@
-from repy.funcs import *
+from funcs import *
 
 if __name__ == "__main__":
     conf = get_ini('info.ini')
