@@ -9,8 +9,9 @@ from configparser import RawConfigParser as Parse
 from PIL import Image
 from io import BytesIO
 from imgurpython import ImgurClient
-#from time import sleep
-from pprint import pprint
+from psaw import PushshiftAPI
+# from time import sleep
+# from pprint import pprint
 from skimage import img_as_float
 from skimage.measure import compare_ssim as ssim
 from skimage.transform import resize
@@ -56,7 +57,7 @@ def revert(db, red):
     theid, cur = input("Enter ID >>> "), db.cursor()
     sm = red.submission(theid)
     sm.mod.approve()
-    cur.execute(f"UPDATE r9k SET Removed = false WHERE PostID = {theid};")
+    cur.execute(f"UPDATE r9k SET Removed = false AND RMID = NULL WHERE PostID = {theid};")
     cur.close()
     db.commit()
 
@@ -140,11 +141,10 @@ def compare_text(sm1, sm2):
 
 def get_attributes(sm):
     sm.title
-    attfile = open('attributes.txt', 'w')
-    for line in vars(sm):
-        print(line)
-        attfile.write(f"line\n")
-    attfile.close()
+    with open('attributes.txt', 'w') as af:
+        for line in vars(sm):
+            af.write(f"{line}\n")
+    print("File written successfully")
 
 
 def find_image(sm):
@@ -153,7 +153,6 @@ def find_image(sm):
         if sm.id in image:
             directory += f"\\{image}"
             return Image.open(directory)
-    return None
 
 
 def get_from_db(database, column, where):
@@ -166,7 +165,6 @@ def get_from_db(database, column, where):
         return listy
     except psycopg2.ProgrammingError:
         cur.close()
-        return None
 
 
 def get_ids(datab, rmd):
@@ -195,7 +193,21 @@ def show_images(image1, image2):
     plt.show()
 
 
-# def archive(sub):
+def submission_sort(submi):
+    if submi.author is not None:
+        if submi.is_self: return "text"
+        elif submi.is_video: return "video"
+        elif submi.post_hint == "image": return "image"
+        else: return "link"
+
+
+def archive(red, suby):
+    # Get every post in a subreddit since Reddit's creation in 2005 (the api doesn't go this far anyways)
+    api = PushshiftAPI(red)
+    ids = api.search_submissions(after=1119484800, subreddit=suby.display_name)
+    for did in ids:
+        print(did)
+        print(submission_sort(red.submission(id=did)))
 
 
 # def the_final_solution(red, sub, imger, db):
