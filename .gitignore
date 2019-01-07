@@ -2,3 +2,6 @@
 info.ini
 attributes.txt
 r9k_bot.py
+/dist
+/build
+/repy.egg-info
