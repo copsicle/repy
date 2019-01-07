@@ -1,4 +1,5 @@
 praw
+psaw
 requests
 psycopg2-binary
 configparser
