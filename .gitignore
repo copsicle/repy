@@ -5,3 +5,4 @@ r9k_bot.py
 /dist
 /build
 /repy.egg-info
+pypi.bat
