@@ -6,3 +6,4 @@ r9k_bot.py
 /build
 /repy.egg-info
 pypi.bat
+/__PYCACHE__
