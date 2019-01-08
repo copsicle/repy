@@ -217,6 +217,7 @@ def submission_sort(submi):
         return "link"
     elif submi.selftext == "[deleted]": return "removed"
 
+
 def archive(red, suby):
     # Get every post in a subreddit since Reddit's creation in 2005 (the api doesn't go this far anyways)
     api = PushshiftAPI(red)
