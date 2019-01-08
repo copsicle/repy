@@ -1,8 +1,9 @@
 """
 import pip._internal as pip
-pip.main(['install', '-q', 'praw', 'scikit-image', 'matplotlib', 'psycopg2', 'numpy', 'pillow', 'configparser', 'imgurpython'])
+pip.main(['install', '-q', 'praw', 'psaw', 'scikit-image', 'matplotlib',
+'psycopg2-binary', 'numpy', 'pillow', 'configparser', 'imgurpython'])
 """
-import praw, os, requests, psycopg2, threading, sys
+import praw, os, requests, psycopg2
 import matplotlib.pyplot as plt
 # import numpy as np
 from configparser import RawConfigParser as Parse
@@ -10,6 +11,7 @@ from PIL import Image
 from io import BytesIO
 from imgurpython import ImgurClient
 from psaw import PushshiftAPI
+# from multiprocessing import pool
 # from time import sleep
 # from pprint import pprint
 from skimage import img_as_float
@@ -18,13 +20,14 @@ from skimage.transform import resize
 
 
 def get_ini(ininame):
+    # Get credentials via ini, requires string of file name
     config = Parse()
     config.read(ininame)
     return config
 
 
 def reddit_session(cfg):
-    # Start a connection with Reddit using credentials in an ini file
+    # Start a connection with Reddit using credentials from the ini
     red = praw.Reddit(client_id=cfg['reddit']['clientid'],
                       client_secret=cfg['reddit']['secret'],
                       password=cfg['reddit']['password'],
@@ -36,16 +39,19 @@ def reddit_session(cfg):
 
 
 def imgur_session(cfg):
+    # Start a connection with Imgur using credentials from the ini
     return ImgurClient(cfg['imgur']['icid'], cfg['imgur']['icis'])
 
 
 def connect_to_db(cfg):
+    # Connect to the local database
     return psycopg2.connect(dbname=cfg['database']['name'],
                             user=cfg['database']['username'],
                             password=cfg['database']['password'])
 
 
 def mod_console(data, red, cfg):
+    # Console to run commands manually while the code is running, should be ran in its own thread
     while True:
         try:
             eval(input("Insert Commands (data, red) >>> "))
@@ -53,31 +59,32 @@ def mod_console(data, red, cfg):
             continue
 
 
-def revert(db, red):
-    theid, cur = input("Enter ID >>> "), db.cursor()
+def revert(db, red, theid):
+    # Reverts removal of a post via this bot, can be ran in the modconsole
     sm = red.submission(theid)
     sm.mod.approve()
-    cur.execute(f"UPDATE r9k SET Removed = false AND RMID = NULL WHERE PostID = {theid};")
-    cur.close()
+    with db.cursor() as cur:
+        cur.execute(f"UPDATE repy SET Removed = false AND RMID = NULL WHERE PostID = {theid};")
     db.commit()
 
 
 def close(db):
+    # Shuts down the bot safely and rolls back any changes to the database
     db.rollback()
     db.close()
     raise SystemExit
 
 
 def new_table(data):
-    cur = data.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS r9k "
-                "(PostID varchar(10) NOT NULL,"
-                "Type varchar(10) NOT NULL,"
-                "Removed boolean DEFAULT false,"
-                "RMID varchar(10);")
+    # Creates a new table in the db schema if it doesn't exist already
+    with data.cursor() as cur:
+        cur.execute("CREATE TABLE IF NOT EXISTS repy "
+                    "(PostID varchar(10) NOT NULL,"
+                    "Type varchar(10) NOT NULL,"
+                    "Removed boolean DEFAULT false,"
+                    "RMID varchar(10);")
     # PostID - Submission ID, Type - what kind of submission is it, Removed - is the post removed,
-    # RMID - the sub id which looked similar to this if it was removed
-    cur.close()
+    # RMID - the sm id which looked similar to this if it was removed (null if it wasn't)
     data.commit()
 
 
@@ -95,6 +102,7 @@ def get_image(sm, imgr):
 
 
 def create_image_path():
+    # Creates a folder to store images
     directory = ".\\images"
     if os.path.exists(directory):
         return len([thing for thing in os.listdir(directory)])
@@ -105,7 +113,7 @@ def create_image_path():
 
 def get_image_resizing_params(im1, im2):
     # Checks and returns the smallest dimensions within two images
-    i1s, i2s, results = None, None, []
+    results = []
     for x in range(2):
         results.append(min(im1.shape[x], im2.shape[x]))
     return results[0], results[1]
@@ -126,6 +134,7 @@ def compare_images(im1, im2):
 
 
 def save_image(sm, imger):
+    # Save the image
     directory = ".\\images"
     img, frmt = get_image(sm, imger)
     if img.mode == "RGBA" and frmt == "jpg": img = img.convert("RGB")
@@ -133,6 +142,7 @@ def save_image(sm, imger):
 
 
 def compare_text(sm1, sm2):
+    # Compare two texts to detect copypasta
     str1, str2 = sm1.selftext, sm2.selftext
     a, b = set(str1.split()), set(str2.split())
     c = a.intersection(b)
@@ -140,6 +150,7 @@ def compare_text(sm1, sm2):
 
 
 def get_attributes(sm):
+    # Saves to a text file all the attributes a specific submission object has
     sm.title
     with open('attributes.txt', 'w') as af:
         for line in vars(sm):
@@ -148,6 +159,7 @@ def get_attributes(sm):
 
 
 def find_image(sm):
+    # Finds an image in the folder via searching by id
     directory = ".\\images"
     for image in os.listdir(directory):
         if sm.id in image:
@@ -156,18 +168,17 @@ def find_image(sm):
 
 
 def get_from_db(database, column, where):
-    try:
-        cur, listy = database.cursor(), []
-        cur.execute(f"SELECT {column} FROM r9k {where};")
+    # Gets something from the database
+    listy = []
+    with database.cursor() as cur:
+        cur.execute(f"SELECT {column} FROM repy {where};")
         for tp in cur.fetchall():
             listy.append(tp[0])
-        cur.close()
-        return listy
-    except psycopg2.ProgrammingError:
-        cur.close()
+    return listy
 
 
 def get_ids(datab, rmd):
+    # Gets ids of all removed/not removed submissions in the db
     no = "WHERE Removed"
     if rmd is None : no = ""
     elif not rmd : no = "WHERE NOT Removed"
@@ -177,16 +188,18 @@ def get_ids(datab, rmd):
 
 
 def get_row(datab, sm):
+    # Gets info about a submission in the database
     nice = get_from_db(datab, "*", f"WHERE PostID = {sm.id}")
     if nice is None : return None
     return nice
 
 
 def show_images(image1, image2):
+    # Show two images
     fig, axes = plt.subplots(nrows=1, ncols=2)
     ax = axes.ravel()
     ax[0].imshow(img_as_float(image1))
-    ax[0].set_title("The image")
+    ax[0].set_title("The first image")
     ax[1].imshow(img_as_float(image2))
     ax[1].set_title("The second image")
     plt.tight_layout()
@@ -194,11 +207,15 @@ def show_images(image1, image2):
 
 
 def submission_sort(submi):
+    # Returns a string which specifies what type of post is given
     if submi.author is not None:
         if submi.is_self: return "text"
         elif submi.is_video: return "video"
-        elif submi.post_hint == "image": return "image"
-        else: return "link"
+        elif len(submi.url.split(".")[-1]) == 3 or len(submi.url.split(".")[-1]) == 4 \
+                or submi.domain == "imgur.com": return "image"
+        # It's janky but it works(tm)
+        return "link"
+    elif submi.selftext == "[deleted]": return "removed"
 
 
 def archive(red, suby):
@@ -206,8 +223,16 @@ def archive(red, suby):
     api = PushshiftAPI(red)
     ids = api.search_submissions(after=1119484800, subreddit=suby.display_name)
     for did in ids:
-        print(did)
-        print(submission_sort(red.submission(id=did)))
+        print(f"{did} is {submission_sort(red.submission(id=did))}")
+
+
+def add_to_db(db, subm, rmid):
+# Add a submission to the database
+    bool = False
+    if rmid: bool = True
+    with db.cursor() as cur:
+        cur.execute("INSERT INTO repy (PostID, Type, Removed, RMID) "
+                    f"VALUES ({subm.id}, {submission_sort(subm)}, {bool}, {rmid});")
 
 
 # def the_final_solution(red, sub, imger, db):
