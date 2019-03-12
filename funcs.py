@@ -69,7 +69,8 @@ def revert(db, red, theid):
     sm = red.submission(id=theid)
     sm.mod.approve()
     with db.cursor() as cur:
-        cur.execute("UPDATE repy SET Removed = false AND RMID = NULL WHERE PostID = %s;", theid)
+        cur.execute("UPDATE repy SET Removed = false, Type = %s, RMID = NULL WHERE PostID = %s;",
+                    (submission_sort(sm), theid))
     db.commit()
 
 
@@ -91,6 +92,7 @@ def new_table(data):
     # PostID - Submission ID, Type - what kind of submission is it, Removed - is the post removed,
     # RMID - the sm id which looked similar to this if it was removed (null if it wasn't)
     data.commit()
+    return is_db_empty(data)
 
 
 def get_image(sm, imgr):
@@ -236,12 +238,15 @@ def add_to_db(db, subm, rmid):
 
 
 def remove_submission(db, subm, rmsm):
+    # Remove a submission from the database and Reddit (only with an original submission)
     copypasta = "Your submission was removed because it is a suspected repost. The post that collides with yours can" \
-        f" be found [here]({rmsm.permalink}). \n \n ^(I am a bot, this action was performed automatically.) " \
+        f" be found [here](http://www.reddit.com{rmsm.permalink})." \
+        "\n \n ^(I am a bot, this action was performed automatically.) " \
         "\n \n ^(If you have any questions or you believe I am wrong please contact to moderators of the subreddit)" \
         "\n \n ^(All of my code is visible [here](https://github.com/copsicle/repy))"
-    subm.reply(copypasta)
-    subm.remove()
+    if not subm == rmsm:
+        subm.mod.send_removal_message(copypasta, title="repost")
+        subm.mod.remove()
     with db.cursor() as cur:
         cur.execute("UPDATE repy SET Removed = true, Type = %s, RMID = %s WHERE PostID = %s",
                     ("removed", rmsm.id, subm.id))
@@ -256,32 +261,54 @@ def remove_image(subm):
             break
 
 
+def db_to_ram(red, imger, db):
+    submissions = []
+    for ids in get_from_db(db, "PostID, Type, Removed", ""):
+        print(ids[0])
+        sm = red.submission(id=ids[0])
+        if submission_sort(sm) == "removed":
+            if not ids[2]:
+                if ids[1] == "image" and find_image(sm) is not None: remove_image(sm)
+                remove_submission(db, sm, sm)
+                continue
+            elif ids[2]: continue
+        if ids[1] == "image" and find_image(sm) is None: save_image(sm, imger)
+        submissions.append(RepySubmission(ids[0], ids[1], sm.url, sm.selftext, sm.permalink))
+    return submissions
+
+
 def is_db_empty(db):
-    emptydb = True
     with db.cursor() as cur:
         cur.execute("SELECT * FROM repy;")
-        if cur.fetchone() is not None:
-            emptydb = False
-    return emptydb
+        if cur.fetchone() is not None: return False
+    return True
+
+
+def is_original(sm, smlist, detection):
+    if sm.type == "image":
+        original = find_image(sm)
+        for repysubmission in smlist:
+            if repysubmission.type == "image":
+                if compare_images(original, find_image(repysubmission)) > detection: return True
+    elif sm.type == "text":
+        for repysubmission in smlist:
+            if repysubmission.type == "text":
+                if compare_text(sm, repysubmission) > detection: return True
+    elif sm.type == "video":
+        print("Video Comparing is not supported, implementation of thumbnail comparing might be added soon.")
+        pass
+    elif sm.type == "link":
+        for repysubmission in smlist:
+            if repysubmission.type == "link":
+                if sm.url == repysubmission.url: return True
+    return False
 
 
 class RepySubmission:
-    def __init__(self, pid, ptype, url, text):
-        self.pid = pid
-        self.ptype = ptype
+    # A simple class that shadows the Submission object, meant for efficient information access for quick operations
+    def __init__(self, id, type, url, selftext, permalink):
+        self.id = id
+        self.type = type
         self.url = url
-        self.text = text
-
-
-def db_to_ram(red, imger, db):
-    submissions = []
-    for ids in get_from_db(db, "(PostID, Type, Removed)", ""):
-        sm = red.submission(id=ids[0])
-        if sm.removed and not ids[2]:
-            if submission_sort(sm) and find_image(sm) is not None == "image": remove_image(sm)
-            remove_submission(db, sm, sm)
-            continue
-        elif ids[2] and sm.removed: continue
-        if ids[1] == "image" and find_image(sm) is None: get_image(sm, imger)
-        submissions.append(RepySubmission(ids[0], ids[1], sm.permalink, sm.selftext))
-    return submissions
+        self.text = selftext
+        self.permalink = permalink
