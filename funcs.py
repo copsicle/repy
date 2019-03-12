@@ -102,8 +102,9 @@ def get_image(sm, imgr):
     url = sm.url
     if submission_sort(sm) == "video": url = sm.thumbnail
     if sm.domain == 'imgur.com':
-        img = imgr.get_image(url.split("/")[-1:][0])
-        url = img.link
+        splitlink = url.split("/")
+        if splitlink[-2:][0] == "a": url = imgr.get_album_images(splitlink[-1:][0])[0].link
+        else: url = imgr.get_image(splitlink[-1:][0]).link
     print(f"Got an image on this url : {url}")
     response = requests.get(url)
     return Image.open(BytesIO(response.content)), url.split(".")[-1:][0]
@@ -217,8 +218,7 @@ def submission_sort(submi):
     if submi.author is None or submi.selftext == '[removed]' or submi.selftext == '{deleted]': return "removed"
     elif submi.is_self: return "text"
     elif submi.is_video: return "video"
-    elif len(submi.url.split(".")[-1]) == 3 or len(submi.url.split(".")[-1]) == 4 \
-        or submi.domain == "imgur.com": return "image"
+    elif submi.domain == "i.redd.it" or submi.domain == "imgur.com": return "image"
     # It's janky but it works™
     return "link"
 
@@ -267,14 +267,15 @@ def db_to_ram(red, imger, db):
     for ids in get_from_db(db, "PostID, Type, Removed", ""):
         print(ids[0])
         sm = red.submission(id=ids[0])
-        if submission_sort(sm) == "removed":
+        ss = submission_sort(sm)
+        if ss == "removed":
             if not ids[2]:
                 if ids[1] == "image" and find_image(sm) is not None: remove_image(sm)
                 remove_submission(db, sm, sm)
                 continue
-            elif ids[2]: continue
+        if ss == "removed" and ids[2]: continue
         if ids[1] == "image" and find_image(sm) is None: save_image(sm, imger)
-        submissions.append(RepySubmission(ids[0], ids[1], sm.url, sm.selftext, sm.permalink))
+        submissions.append(RepySubmission(ids[0], ss, sm.url, sm.selftext, sm.permalink))
     return submissions
 
 
@@ -286,20 +287,18 @@ def is_db_empty(db):
 
 
 def is_original(sm, smlist, detection):
+    for repysubmission in smlist:
+        if sm.url == repysubmission.url: return False, repysubmission
     if sm.type == "image" or sm.type == "video":
         original = find_image(sm)
         for repysubmission in smlist:
             if repysubmission.type == "image" or repysubmission.type == "video":
-                if compare_images(original, find_image(repysubmission)) > detection: return True
+                if compare_images(original, find_image(repysubmission)) > detection: return False, repysubmission
     elif sm.type == "text":
         for repysubmission in smlist:
             if repysubmission.type == "text":
-                if compare_text(sm, repysubmission) > detection: return True
-    elif sm.type == "link":
-        for repysubmission in smlist:
-            if repysubmission.type == "link":
-                if sm.url == repysubmission.url: return True
-    return False
+                if compare_text(sm, repysubmission) > detection: return False, repysubmission
+    return True
 
 
 class RepySubmission:
