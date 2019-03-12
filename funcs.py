@@ -100,6 +100,7 @@ def get_image(sm, imgr):
     # print(sm.domain)
     # print(type(sm.domain))
     url = sm.url
+    if submission_sort(sm) == "video": url = sm.thumbnail
     if sm.domain == 'imgur.com':
         img = imgr.get_image(url.split("/")[-1:][0])
         url = img.link
@@ -285,18 +286,15 @@ def is_db_empty(db):
 
 
 def is_original(sm, smlist, detection):
-    if sm.type == "image":
+    if sm.type == "image" or sm.type == "video":
         original = find_image(sm)
         for repysubmission in smlist:
-            if repysubmission.type == "image":
+            if repysubmission.type == "image" or repysubmission.type == "video":
                 if compare_images(original, find_image(repysubmission)) > detection: return True
     elif sm.type == "text":
         for repysubmission in smlist:
             if repysubmission.type == "text":
                 if compare_text(sm, repysubmission) > detection: return True
-    elif sm.type == "video":
-        print("Video Comparing is not supported, implementation of thumbnail comparing might be added soon.")
-        pass
     elif sm.type == "link":
         for repysubmission in smlist:
             if repysubmission.type == "link":
