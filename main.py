@@ -1,10 +1,17 @@
-from funcs import *
+# import multiprocessing as mp
+from repy.funcs import *
 
 if __name__ == "__main__":
     conf = get_ini('info.ini')
     r, sr = reddit_session(conf)
-    for sumi in sr.stream.submissions():
-        print(sumi.id)
+    db = db_session(conf)
+    img = imgur_session(conf)
+    dirlist = create_image_path()
+    isempty, fsm = new_table(db)
+    if isempty: archive_to_db(db, r, sr)
+    smlist = db_to_ram(r, img, db, "")
+    compare_lists(archive(r, sr, id_to_time(fsm[0], r)), smlist, db, img)
+
 """
     imgur = imgur_session(conf)
     create_image_path()

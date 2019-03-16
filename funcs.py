@@ -15,8 +15,9 @@ from PIL import Image
 from io import BytesIO
 from imgurpython import ImgurClient
 from psaw import PushshiftAPI
+# from datetime import datetime, timedelta
+# from time import mktime
 # from multiprocessing import pool
-# from time import sleep
 # from pprint import pprint
 from skimage import img_as_float
 from skimage.measure import compare_ssim as ssim
@@ -47,14 +48,14 @@ def imgur_session(cfg):
     return ImgurClient(cfg['imgur']['icid'], cfg['imgur']['icis'])
 
 
-def connect_to_db(cfg):
+def db_session(cfg):
     # Connect to the local database
     return psycopg2.connect(dbname=cfg['database']['name'],
                             user=cfg['database']['username'],
                             password=cfg['database']['password'])
 
 
-def mod_console(data, red, cfg):
+def mod_console():
     # Console to run commands manually while the code is running, should be ran in its own thread
     while True:
         try:
@@ -87,6 +88,7 @@ def new_table(data):
         cur.execute("CREATE TABLE IF NOT EXISTS repy "
                     "(PostID varchar(10) NOT NULL,"
                     "Type varchar(10) NOT NULL,"
+                    "Checked boolean DEFAULT false,"
                     "Removed boolean DEFAULT false,"
                     "RMID varchar(10));")
     # PostID - Submission ID, Type - what kind of submission is it, Removed - is the post removed,
@@ -149,7 +151,7 @@ def save_image(sm, imger):
 
 
 def compare_text(sm1, sm2):
-    # Compare two texts to detect copypasta
+    # Compare two texts to detect copy-pasting
     str1, str2 = sm1.selftext, sm2.selftext
     a, b = set(str1.split()), set(str2.split())
     c = a.intersection(b)
@@ -219,22 +221,26 @@ def submission_sort(submi):
     elif submi.is_self: return "text"
     elif submi.is_video: return "video"
     elif submi.domain == "i.redd.it" or submi.domain == "imgur.com": return "image"
-    # It's janky but it works™
+    # It's stank but it works™
     return "link"
 
 
-def archive(red, suby):
+def archive(red, suby, t):
     # Get every post in a subreddit since Reddit's creation in 2005 (the api doesn't go this far anyways)
-    return PushshiftAPI(red).search_submissions(after=1119484800, subreddit=suby.display_name)
+    return PushshiftAPI(red).search_submissions(after=t, subreddit=suby.display_name)
 
 
 def add_to_db(db, subm, rmid):
     # Add a submission to the database
+    ss = submission_sort(subm)
     bool1 = False
     if rmid: bool1 = True
+    if ss == "removed":
+        bool1 = True
+        rmid = subm.id
     with db.cursor() as cur:
         cur.execute("INSERT INTO repy (PostID, Type, Removed, RMID) VALUES (%s, %s, %s, %s);",
-                    (subm.id, submission_sort(subm), bool1, rmid))
+                    (subm.id, ss, bool1, rmid))
     db.commit()
 
 
@@ -262,50 +268,90 @@ def remove_image(subm):
             break
 
 
-def db_to_ram(red, imger, db):
+def db_to_ram(red, imger, db, where):
     submissions = []
-    for ids in get_from_db(db, "PostID, Type, Removed", ""):
+    for ids in get_from_db(db, "PostID, Type, Removed", where):
         print(ids[0])
         sm = red.submission(id=ids[0])
+        hi = find_image(sm)
         ss = submission_sort(sm)
         if ss == "removed":
             if not ids[2]:
-                if ids[1] == "image" and find_image(sm) is not None: remove_image(sm)
+                if ids[1] == "image" and hi is not None: remove_image(sm)
                 remove_submission(db, sm, sm)
                 continue
         if ss == "removed" and ids[2]: continue
-        if ids[1] == "image" and find_image(sm) is None: save_image(sm, imger)
-        submissions.append(RepySubmission(ids[0], ss, sm.url, sm.selftext, sm.permalink))
+        if ss == "image" and hi is None:
+            save_image(sm, imger)
+            hi = find_image(sm)
+        submissions.append(RepySubmission(ids[0], ss, sm.url, sm.selftext, hi, sm.permalink))
     return submissions
 
 
 def is_db_empty(db):
     with db.cursor() as cur:
         cur.execute("SELECT * FROM repy;")
-        if cur.fetchone() is not None: return False
+        firstsm = cur.fetchone()
+        if firstsm is not None: return False, firstsm
     return True
 
 
 def is_original(sm, smlist, detection):
     for repysubmission in smlist:
+        if repysubmission.id == sm.id: continue
         if sm.url == repysubmission.url: return False, repysubmission
     if sm.type == "image" or sm.type == "video":
         original = find_image(sm)
         for repysubmission in smlist:
+            if repysubmission.id == sm.id: continue
             if repysubmission.type == "image" or repysubmission.type == "video":
                 if compare_images(original, find_image(repysubmission)) > detection: return False, repysubmission
     elif sm.type == "text":
         for repysubmission in smlist:
+            if repysubmission.id == sm.id: continue
             if repysubmission.type == "text":
                 if compare_text(sm, repysubmission) > detection: return False, repysubmission
     return True
 
 
+def archive_to_db(db, re, sub):
+    for submission in archive(re, sub, 1119484800): add_to_db(db, submission, None)
+
+
+def id_to_time(smid, r):
+    return r.submission(id=smid).created_utc
+
+
+def return_repy(sm, imgur):
+    ss = submission_sort(sm)
+    if ss == "image" and find_image(sm) is None: save_image(sm, imgur)
+    return RepySubmission(sm.id, submission_sort(sm), sm.url, sm.selftext, find_image(sm), sm.permalink)
+
+
+def compare_lists(newlist, ramlist, db, imgur):
+    for sm in newlist:
+        head = True
+        for osm in ramlist:
+            if sm.id == osm.id:
+                head = False
+                break
+        if head:
+            add_to_db(db, sm, None)
+            ramlist.append(return_repy(sm, imgur))
+
+
+def check_mark(db, sm):
+    with db.cursor() as cur:
+        cur.execute("UPDATE repy SET Checked = True WHERE PostID = %s;", sm.id)
+    db.commit()
+
+
 class RepySubmission:
     # A simple class that shadows the Submission object, meant for efficient information access for quick operations
-    def __init__(self, id, type, url, selftext, permalink):
+    def __init__(self, id, type, url, selftext, image, permalink):
         self.id = id
         self.type = type
         self.url = url
         self.text = selftext
+        self.image = image
         self.permalink = permalink
